@@ -82,7 +82,13 @@ public class ServletInputStreamImpl extends ServletInputStream {
 
     @Override
     public boolean isReady() {
-        return anyAreSet(state, FLAG_READY) && !isFinished();
+        boolean ready = anyAreSet(state, FLAG_READY) && !isFinished();
+        if (ready) {
+            channel.suspendReads();
+        } else {
+            channel.resumeReads();
+        }
+        return ready;
     }
 
     @Override

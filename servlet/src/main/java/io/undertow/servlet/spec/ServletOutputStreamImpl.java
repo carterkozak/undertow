@@ -737,7 +737,17 @@ public class ServletOutputStreamImpl extends ServletOutputStream implements Buff
             //TODO: is this the correct behaviour?
             throw UndertowServletMessages.MESSAGES.streamNotInAsyncMode();
         }
-        return anyAreSet(state, FLAG_READY);
+        if (anyAreSet(state, FLAG_READY)) {
+            if (channel != null) {
+                channel.suspendWrites();
+            }
+            return true;
+        } else {
+            if (channel != null) {
+                channel.resumeWrites();
+            }
+            return false;
+        }
     }
 
     @Override
@@ -873,18 +883,10 @@ public class ServletOutputStreamImpl extends ServletOutputStream implements Buff
 
                     servletRequestContext.getCurrentServletContext().invokeOnWritePossible(servletRequestContext.getExchange(), listener);
 
-                    if (isReady()) {
-                        //if the stream is still ready then we do not resume writes
-                        //this is per spec, we only call the listener once for each time
-                        //isReady returns true
-                        if (channel != null) {
-                            channel.suspendWrites();
-                        }
-                    } else {
-                        if (channel != null) {
-                            channel.resumeWrites();
-                        }
-                    }
+                    //if the stream is still ready then we do not resume writes
+                    //this is per spec, we only call the listener once for each time
+                    //isReady returns true
+                    isReady();
                 } catch (Throwable e) {
                     IoUtils.safeClose(channel);
                 } finally {
