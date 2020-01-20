@@ -646,6 +646,10 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
                     closeListeners[i].handleEvent(this);
                 }
             }
+            // UNDERTOW-1639: Close may be called from an I/O thread while a worker is blocked on awaitReadable.
+            // Once the channel is closed, callers must be awoken. Note that this does not check 'waiters' because
+            // the value is not volatile and could result in a race.
+            lock.notifyAll();
         }
     }
 
