@@ -121,21 +121,21 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
             return 0;
         }
         try {
-            if (frameDataRemaining == 0 && anyAreSet(state, STATE_LAST_FRAME)) {
-                synchronized (lock) {
+            synchronized (lock) {
+                if (frameDataRemaining == 0 && anyAreSet(state, STATE_LAST_FRAME)) {
                     state |= STATE_RETURNED_MINUS_ONE;
                     return -1;
-                }
-            } else if (data != null) {
-                int old = data.getBuffer().limit();
-                try {
-                    if (count < data.getBuffer().remaining()) {
-                        data.getBuffer().limit((int) (data.getBuffer().position() + count));
+                } else if (data != null) {
+                    int old = data.getBuffer().limit();
+                    try {
+                        if (count < data.getBuffer().remaining()) {
+                            data.getBuffer().limit((int) (data.getBuffer().position() + count));
+                        }
+                        return target.write(data.getBuffer(), position);
+                    } finally {
+                        data.getBuffer().limit(old);
+                        decrementFrameDataRemaining();
                     }
-                    return target.write(data.getBuffer(), position);
-                } finally {
-                    data.getBuffer().limit(old);
-                    decrementFrameDataRemaining();
                 }
             }
             return 0;
@@ -161,34 +161,34 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
             return 0;
         }
         try {
-            if (frameDataRemaining == 0 && anyAreSet(state, STATE_LAST_FRAME)) {
-                synchronized (lock) {
+            synchronized (lock) {
+                if (frameDataRemaining == 0 && anyAreSet(state, STATE_LAST_FRAME)) {
                     state |= STATE_RETURNED_MINUS_ONE;
                     return -1;
-                }
-            } else if (data != null && data.getBuffer().hasRemaining()) {
-                int old = data.getBuffer().limit();
-                try {
-                    if (count < data.getBuffer().remaining()) {
-                        data.getBuffer().limit((int) (data.getBuffer().position() + count));
+                } else if (data != null && data.getBuffer().hasRemaining()) {
+                    int old = data.getBuffer().limit();
+                    try {
+                        if (count < data.getBuffer().remaining()) {
+                            data.getBuffer().limit((int) (data.getBuffer().position() + count));
+                        }
+                        int written = streamSinkChannel.write(data.getBuffer());
+                        if (data.getBuffer().hasRemaining()) {
+                            //we can still add more data
+                            //stick it it throughbuffer, otherwise transfer code will continue to attempt to use this method
+                            throughBuffer.clear();
+                            Buffers.copy(throughBuffer, data.getBuffer());
+                            throughBuffer.flip();
+                        } else {
+                            throughBuffer.position(throughBuffer.limit());
+                        }
+                        return written;
+                    } finally {
+                        data.getBuffer().limit(old);
+                        decrementFrameDataRemaining();
                     }
-                    int written = streamSinkChannel.write(data.getBuffer());
-                    if(data.getBuffer().hasRemaining()) {
-                        //we can still add more data
-                        //stick it it throughbuffer, otherwise transfer code will continue to attempt to use this method
-                        throughBuffer.clear();
-                        Buffers.copy(throughBuffer, data.getBuffer());
-                        throughBuffer.flip();
-                    } else {
-                        throughBuffer.position(throughBuffer.limit());
-                    }
-                    return written;
-                } finally {
-                    data.getBuffer().limit(old);
-                    decrementFrameDataRemaining();
+                } else {
+                    throughBuffer.position(throughBuffer.limit());
                 }
-            } else {
-                throughBuffer.position(throughBuffer.limit());
             }
             return 0;
         } finally {
@@ -329,7 +329,7 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
         waitingForFrame = false;
         if(data == null && pendingFrameData.isEmpty() && frameDataRemaining == 0) {
             synchronized (lock) {
-                state |= STATE_DONE | STATE_CLOSED;
+                state |= STATE_DONE;
             }
             getFramedChannel().notifyFrameReadComplete(this);
             IoUtils.safeClose(this);
@@ -345,9 +345,9 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
         if(Thread.currentThread() == getIoThread()) {
             throw UndertowMessages.MESSAGES.awaitCalledFromIoThread();
         }
-        if (data == null && pendingFrameData.isEmpty()) {
+        if (data == null && pendingFrameData.isEmpty() && !anyAreSet(state, STATE_STREAM_BROKEN | STATE_CLOSED)) {
             synchronized (lock) {
-                if (data == null && pendingFrameData.isEmpty()) {
+                if (data == null && pendingFrameData.isEmpty() && !anyAreSet(state, STATE_STREAM_BROKEN | STATE_CLOSED)) {
                     try {
                         waiters++;
                         lock.wait();
@@ -367,9 +367,9 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
         if(Thread.currentThread() == getIoThread()) {
             throw UndertowMessages.MESSAGES.awaitCalledFromIoThread();
         }
-        if (data == null) {
+        if (data == null && pendingFrameData.isEmpty() && !anyAreSet(state, STATE_STREAM_BROKEN | STATE_CLOSED)) {
             synchronized (lock) {
-                if (data == null) {
+                if (data == null && pendingFrameData.isEmpty() && !anyAreSet(state, STATE_STREAM_BROKEN | STATE_CLOSED)) {
                     try {
                         waiters++;
                         lock.wait(timeUnit.toMillis(l));
@@ -391,11 +391,11 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
      * @param frameData  The frame data
      */
     protected void dataReady(FrameHeaderData headerData, PooledByteBuffer frameData) {
-        if(anyAreSet(state, STATE_STREAM_BROKEN | STATE_CLOSED)) {
-            frameData.close();
-            return;
-        }
         synchronized (lock) {
+            if(anyAreSet(state, STATE_STREAM_BROKEN | STATE_CLOSED)) {
+                frameData.close();
+                return;
+            }
             boolean newData = pendingFrameData.isEmpty();
             this.pendingFrameData.add(new FrameData(headerData, frameData));
             if (newData) {
@@ -479,24 +479,24 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
             return 0;
         }
         try {
-            if (frameDataRemaining == 0 && anyAreSet(state, STATE_LAST_FRAME)) {
-                synchronized (lock) {
+            synchronized (lock) {
+                if (frameDataRemaining == 0 && anyAreSet(state, STATE_LAST_FRAME)) {
                     state |= STATE_RETURNED_MINUS_ONE;
-                }
-                return -1;
-            } else if (data != null) {
-                int old = data.getBuffer().limit();
-                try {
-                    long count = Buffers.remaining(dsts, offset, length);
-                    if (count < data.getBuffer().remaining()) {
-                        data.getBuffer().limit((int) (data.getBuffer().position() + count));
-                    } else {
-                        count = data.getBuffer().remaining();
+                    return -1;
+                } else if (data != null) {
+                    int old = data.getBuffer().limit();
+                    try {
+                        long count = Buffers.remaining(dsts, offset, length);
+                        if (count < data.getBuffer().remaining()) {
+                            data.getBuffer().limit((int) (data.getBuffer().position() + count));
+                        } else {
+                            count = data.getBuffer().remaining();
+                        }
+                        return Buffers.copy((int) count, dsts, offset, length, data.getBuffer());
+                    } finally {
+                        data.getBuffer().limit(old);
+                        decrementFrameDataRemaining();
                     }
-                    return Buffers.copy((int) count, dsts, offset, length, data.getBuffer());
-                } finally {
-                    data.getBuffer().limit(old);
-                    decrementFrameDataRemaining();
                 }
             }
             return 0;
@@ -523,24 +523,24 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
             return 0;
         }
         try {
-            if (frameDataRemaining == 0 && anyAreSet(state, STATE_LAST_FRAME)) {
-                synchronized (lock) {
+            synchronized (lock) {
+                if (frameDataRemaining == 0 && anyAreSet(state, STATE_LAST_FRAME)) {
                     state |= STATE_RETURNED_MINUS_ONE;
-                }
-                return -1;
-            } else if (data != null) {
-                int old = data.getBuffer().limit();
-                try {
-                    int count = dst.remaining();
-                    if (count < data.getBuffer().remaining()) {
-                        data.getBuffer().limit(data.getBuffer().position() + count);
-                    } else {
-                        count = data.getBuffer().remaining();
+                    return -1;
+                } else if (data != null) {
+                    int old = data.getBuffer().limit();
+                    try {
+                        int count = dst.remaining();
+                        if (count < data.getBuffer().remaining()) {
+                            data.getBuffer().limit(data.getBuffer().position() + count);
+                        } else {
+                            count = data.getBuffer().remaining();
+                        }
+                        return Buffers.copy(count, dst, data.getBuffer());
+                    } finally {
+                        data.getBuffer().limit(old);
+                        decrementFrameDataRemaining();
                     }
-                    return Buffers.copy(count, dst, data.getBuffer());
-                } finally {
-                    data.getBuffer().limit(old);
-                    decrementFrameDataRemaining();
                 }
             }
             return 0;
@@ -588,9 +588,11 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
     }
 
     private void exitRead() throws IOException {
-        if (data != null && !data.getBuffer().hasRemaining()) {
-            data.close();
-            data = null;
+        synchronized (lock) {
+            if (data != null && !data.getBuffer().hasRemaining()) {
+                data.close();
+                data = null;
+            }
         }
         if (frameDataRemaining == 0) {
             try {
@@ -627,6 +629,9 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
             return;
         }
         synchronized (lock) {
+            if(anyAreSet(state, STATE_CLOSED)) {
+                return;
+            }
             state |= STATE_CLOSED;
             if (allAreClear(state, STATE_DONE | STATE_LAST_FRAME)) {
                 state |= STATE_STREAM_BROKEN;
@@ -649,7 +654,9 @@ public abstract class AbstractFramedStreamSourceChannel<C extends AbstractFramed
             // UNDERTOW-1639: Close may be called from an I/O thread while a worker is blocked on awaitReadable.
             // Once the channel is closed, callers must be awoken. Note that this does not check 'waiters' because
             // the value is not volatile and could result in a race.
-            lock.notifyAll();
+            if (waiters > 0) {
+                lock.notifyAll();
+            }
         }
     }
 

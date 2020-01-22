@@ -22,17 +22,21 @@ import static io.undertow.server.handlers.ResponseCodeHandler.HANDLE_404;
 import static org.xnio.Options.SSL_CLIENT_AUTH_MODE;
 import static org.xnio.SslClientAuthMode.REQUESTED;
 
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.Inet4Address;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.nio.file.Paths;
 import java.security.KeyManagementException;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 import javax.net.ssl.KeyManager;
@@ -42,6 +46,10 @@ import javax.net.ssl.SSLEngine;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 
+import io.undertow.Undertow;
+import io.undertow.server.handlers.BlockingHandler;
+import io.undertow.util.Protocols;
+import org.apache.commons.io.IOUtils;
 import org.junit.Assume;
 import org.junit.Ignore;
 import org.junit.runner.Description;
@@ -139,7 +147,7 @@ public class DefaultServer extends BlockJUnit4ClassRunner {
     private static final String SERVER_TRUST_STORE = "server.truststore";
     private static final String CLIENT_KEY_STORE = "client.keystore";
     private static final String CLIENT_TRUST_STORE = "client.truststore";
-    private static final char[] STORE_PASSWORD = "password".toCharArray();
+    private static final char[] STORE_PASSWORD = "keystore".toCharArray();
 
     private static final boolean ajp = Boolean.getBoolean("test.ajp");
     private static final boolean h2 = Boolean.getBoolean("test.h2");
@@ -160,13 +168,30 @@ public class DefaultServer extends BlockJUnit4ClassRunner {
     private static LoadBalancingProxyClient loadBalancingProxyClient;
 
     private static KeyStore loadKeyStore(final String name) throws IOException {
-        final InputStream stream = DefaultServer.class.getClassLoader().getResourceAsStream(name);
+        InputStream stream = DefaultServer.class.getClassLoader().getResourceAsStream(name);
         if (stream == null) {
-            throw new RuntimeException("Could not load keystore");
+            stream = new FileInputStream(name);
         }
         try {
             KeyStore loadedKeystore = KeyStore.getInstance("JKS");
             loadedKeystore.load(stream, STORE_PASSWORD);
+
+            return loadedKeystore;
+        } catch (KeyStoreException | NoSuchAlgorithmException | CertificateException e) {
+            throw new IOException(String.format("Unable to load KeyStore %s", name), e);
+        } finally {
+            IoUtils.safeClose(stream);
+        }
+    }
+
+    private static KeyStore loadKeyStore(final String name, String password) throws IOException {
+        InputStream stream = DefaultServer.class.getClassLoader().getResourceAsStream(name);
+        if (stream == null) {
+            stream = new FileInputStream(name);
+        }
+        try {
+            KeyStore loadedKeystore = KeyStore.getInstance("JKS");
+            loadedKeystore.load(stream, password == null ? null : password.toCharArray());
 
             return loadedKeystore;
         } catch (KeyStoreException | NoSuchAlgorithmException | CertificateException e) {
@@ -833,5 +858,38 @@ public class DefaultServer extends BlockJUnit4ClassRunner {
 
     public static void assumeAlpnEnabled() {
         Assume.assumeTrue(isAlpnEnabled());
+    }
+
+    public static void main(String[] args) throws Exception {
+        SSLContext ctx = createSSLContext(
+                loadKeyStore("/home/ckozak/code/conjure-java-runtime/conjure-java-jaxrs-client/src/test/resources/keyStore.jks", "keystore"),
+                loadKeyStore("/home/ckozak/code/conjure-java-runtime/conjure-java-jaxrs-client/src/test/resources/trustStore.jks", null),
+                false);
+        AtomicLong requests = new AtomicLong();
+        Undertow server = Undertow.builder()
+                .setServerOption(UndertowOptions.ENABLE_HTTP2, true)
+                .addHttpsListener(8443, null, ctx)
+                .setHandler(new BlockingHandler(exchange -> {
+                    long current = requests.incrementAndGet();
+                    if (current % 1000 == 0) {
+                        System.out.printf("Received %d requests\n", current);
+                    }
+                    if (!Protocols.HTTP_2_0.equals(exchange.getProtocol())) {
+                        System.err.println("Bad protocol: " + exchange.getProtocol());
+                    }
+                    IOUtils.copyLarge(exchange.getInputStream(), NilOutputStream.INSTANCE);
+                }))
+                .build();
+        server.start();
+    }
+
+    private static final class NilOutputStream extends OutputStream {
+        private static final OutputStream INSTANCE = new NilOutputStream();
+
+        @Override
+        public void write(int b) throws IOException {}
+
+        @Override
+        public void write(byte[] buf, int off, int len) throws IOException {}
     }
 }
