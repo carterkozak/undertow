@@ -150,24 +150,29 @@ public class FileHandlerTestCase {
             message.append("Hello World");
         }
         Path large = Files.createTempFile(null, ".txt");
+        String filename = large.getFileName().toString();
         try {
             Files.copy(new ByteArrayInputStream(message.toString().getBytes(StandardCharsets.UTF_8)), large, StandardCopyOption.REPLACE_EXISTING);
             DefaultServer.setRootHandler(new CanonicalPathHandler()
                     .setNext(new PathHandler()
-                            .addPrefixPath("/path", new ResourceHandler(new PathResourceManager(tmp, 1))
+                            .addPrefixPath("/path", new ResourceHandler(new PathResourceManager(tmp, 1), exchange -> {
+                                exchange.getResponseHeaders().put(Headers.CONTENT_TYPE, "text/plain");
+                                exchange.getResponseSender().send("Request hit: " + exchange.getRequestPath());
+                            })
                                     // 1 byte = force transfer
                                     .setDirectoryListingEnabled(true))));
 
-            HttpGet get = new HttpGet(DefaultServer.getDefaultServerURL() + "/path/" + large.getFileName().toString());
+            HttpGet get = new HttpGet(DefaultServer.getDefaultServerURL() + "/path/" + filename);
             HttpResponse result = client.execute(get);
-            Assert.assertEquals(StatusCodes.OK, result.getStatusLine().getStatusCode());
+            Assert.assertEquals(filename, StatusCodes.OK, result.getStatusLine().getStatusCode());
             final String response = HttpClientUtils.readResponse(result);
             Header[] headers = result.getHeaders("Content-Type");
             Assert.assertEquals("text/plain", headers[0].getValue());
-            Assert.assertTrue(response, response.equals(message.toString()));
+            Assert.assertEquals(filename, message.toString(), response);
 
         } finally {
             client.getConnectionManager().shutdown();
+            Files.delete(large);
         }
     }
 
