@@ -41,6 +41,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.FileChannel;
+import java.util.Objects;
 
 import static org.xnio.Bits.allAreClear;
 import static org.xnio.Bits.allAreSet;
@@ -57,7 +58,7 @@ final class HttpResponseConduit extends AbstractStreamSinkConduit<StreamSinkCond
     private final ByteBufferPool pool;
     private final HttpServerConnection connection;
 
-    private int state = STATE_START;
+    private volatile int state = STATE_START;
 
     private long fiCookie = -1L;
     private String string;
@@ -66,10 +67,11 @@ final class HttpResponseConduit extends AbstractStreamSinkConduit<StreamSinkCond
     private int charIndex;
     private PooledByteBuffer pooledBuffer;
     private PooledByteBuffer pooledFileTransferBuffer;
-    private HttpServerExchange exchange;
+    private volatile HttpServerExchange exchange;
+    private volatile Throwable exchangeUnset = null;
 
     private ByteBuffer[] writevBuffer;
-    private boolean done = false;
+    private volatile boolean done = false;
 
     private static final int STATE_BODY = 0; // Message body, normal pass-through operation
     private static final int STATE_START = 1; // No headers written yet
@@ -99,17 +101,28 @@ final class HttpResponseConduit extends AbstractStreamSinkConduit<StreamSinkCond
         super(next);
         this.pool = pool;
         this.connection = connection;
-        this.exchange = exchange;
+        setExchange(exchange);
     }
     void reset(HttpServerExchange exchange) {
 
-        this.exchange = exchange;
+        setExchange(exchange);
         state = STATE_START;
         fiCookie = -1L;
         string = null;
         headerValues = null;
         valueIdx = 0;
         charIndex = 0;
+    }
+
+    private synchronized ClosedChannelException noExchange(int state, final Object userData, int pos, int length) {
+        HttpServerExchange maybeCurrentExchange = HttpServerExchange.current.get();
+        String message = String.format("failed on thread %s %s with args (%s, %s, %s, %s) maybe exchange %s %s %s state %s, this.state: %s",
+                Thread.currentThread().getName(), Thread.currentThread().getId(), state ,userData, pos, length, getRequestId(maybeCurrentExchange), maybeCurrentExchange, getRequestId(connection.current), state, this.state);
+        ClosedChannelException ex = new ClosedChannelException();
+        ex.initCause(new RuntimeException(
+                message,
+                HttpServerExchange.requestData.get(getRequestId(maybeCurrentExchange))));
+        return ex;
     }
 
     /**
@@ -126,8 +139,17 @@ final class HttpResponseConduit extends AbstractStreamSinkConduit<StreamSinkCond
      * @throws IOException
      */
     private int processWrite(int state, final Object userData, int pos, int length) throws IOException {
-        if (done || exchange == null) {
+        String localExchangeId = getRequestId(exchange);
+        String currentExchangeId = getRequestId(HttpServerExchange.current.get());
+        String connExchangeId = getRequestId(connection.current);
+        if (!Objects.equals(localExchangeId, currentExchangeId) || !Objects.equals(localExchangeId, connExchangeId)) {
+            System.err.printf("[%s %s] Exchange [%s] %s %s %s state %s%n", Thread.currentThread().getId(), Thread.currentThread().getName(), done, localExchangeId, currentExchangeId, connExchangeId, state);
+        }
+        if (done) {
             throw new ClosedChannelException();
+        }
+        if (exchange == null) {
+            throw noExchange(state, userData, pos, length);
         }
         ByteBuffer buffer = null;
         try {
@@ -302,7 +324,25 @@ final class HttpResponseConduit extends AbstractStreamSinkConduit<StreamSinkCond
         } else {
             pooledBuffer.close();
             pooledBuffer = null;
-            this.exchange = null;
+            setExchange(null);
+        }
+    }
+
+    private static String getRequestId(HttpServerExchange exchange) {
+        return exchange == null ? "none" : exchange.getRequestId();
+    }
+
+    private synchronized void setExchange(HttpServerExchange exchange) {
+        HttpServerExchange previous = this.exchange;
+        this.exchange = exchange;
+        if (exchange == null) {
+            RuntimeException ex = new RuntimeException("Exchange unset here on thread " + Thread.currentThread().getName() + " :: " + Thread.currentThread().getId() + " :: requestId " + getRequestId(previous) + " " + previous + " current " + getRequestId(HttpServerExchange.current.get()) + " state: " + state, exchangeUnset);
+            exchangeUnset = ex;
+            if (previous != null) {
+                HttpServerExchange.requestData.put(previous.getRequestId(), ex);
+            }
+        } else {
+            exchangeUnset = null;
         }
     }
 

@@ -78,7 +78,7 @@ import java.util.zip.Deflater;
 @Measurement(iterations = 5, time = 5)
 @Warmup(iterations = 5, time = 5)
 @Fork(value = 5, jvmArgs = {"-Xmx2g", "-Xms2g", "-XX:+UseParallelGC"})
-@Threads(32)
+@Threads(20)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @State(Scope.Benchmark)
@@ -124,7 +124,7 @@ public class JerseyBenchmarks {
 
         // server
         server = Undertow.builder()
-                .setIoThreads(14)
+                .setIoThreads(10)
                 .setWorkerThreads(64)
                 .setServerOption(UndertowOptions.SHUTDOWN_TIMEOUT, 1000)
                 .setHandler(handler).addHttpsListener(0, "0.0.0.0", TLSUtils.newServerContext()).build();

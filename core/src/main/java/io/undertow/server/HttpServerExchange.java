@@ -77,6 +77,8 @@ import java.util.Deque;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -94,6 +96,9 @@ import static org.xnio.Bits.intBitMask;
  * @author <a href="mailto:ropalka@redhat.com">Richard Opalka</a>
  */
 public final class HttpServerExchange extends AbstractAttachable {
+
+    public static final ThreadLocal<HttpServerExchange> current = new ThreadLocal<>();
+    public static final ConcurrentMap<String, Throwable> requestData = new ConcurrentHashMap<>(1024);
 
     // immutable state
 
@@ -149,7 +154,7 @@ public final class HttpServerExchange extends AbstractAttachable {
     /**
      * The actual response channel. May be null if it has not been created yet.
      */
-    private WriteDispatchChannel responseChannel;
+    public WriteDispatchChannel responseChannel;
     /**
      * The actual request channel. May be null if it has not been created yet.
      */
@@ -857,7 +862,13 @@ public final class HttpServerExchange extends AbstractAttachable {
         final Runnable runnable = new Runnable() {
             @Override
             public void run() {
-                Connectors.executeRootHandler(handler, HttpServerExchange.this);
+                current.set(HttpServerExchange.this);
+                try {
+                    Connectors.executeRootHandler(handler, HttpServerExchange.this);
+                } finally {
+                    current.remove();
+                    requestData.remove(HttpServerExchange.this.requestId);
+                }
             }
         };
         dispatch(executor, runnable);
@@ -2067,6 +2078,11 @@ public final class HttpServerExchange extends AbstractAttachable {
 
         WriteDispatchChannel(final ConduitStreamSinkChannel delegate) {
             super(delegate);
+        }
+
+        @Override
+        public String toString() {
+            return "WriteDispatchChannel{" + delegate + '}';
         }
 
         @Override

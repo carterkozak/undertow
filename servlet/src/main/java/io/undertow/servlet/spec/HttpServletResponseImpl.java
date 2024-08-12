@@ -506,9 +506,12 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         } else {
             if (servletOutputStream == null) {
                 createOutputStream();
+                //close also flushes
+                servletOutputStream.close();
+            } else {
+                //close also flushes
+                servletOutputStream.close();
             }
-            //close also flushes
-            servletOutputStream.close();
         }
     }
 

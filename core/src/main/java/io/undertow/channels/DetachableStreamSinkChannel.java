@@ -45,6 +45,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
 
     protected final StreamSinkChannel delegate;
+    private volatile boolean closed;
     protected ChannelListener.SimpleSetter<DetachableStreamSinkChannel> writeSetter;
     protected ChannelListener.SimpleSetter<DetachableStreamSinkChannel> closeSetter;
 
@@ -54,9 +55,13 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     protected abstract boolean isFinished();
 
+    private boolean isFinishedInternal() {
+        return closed || isFinished();
+    }
+
     @Override
     public void suspendWrites() {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             return;
         }
         delegate.suspendWrites();
@@ -65,7 +70,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public boolean isWriteResumed() {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             return false;
         }
         return delegate.isWriteResumed();
@@ -73,7 +78,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public void shutdownWrites() throws IOException {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             return;
         }
         delegate.shutdownWrites();
@@ -81,7 +86,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public void awaitWritable() throws IOException {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             throw UndertowMessages.MESSAGES.channelIsClosed();
         }
         delegate.awaitWritable();
@@ -89,7 +94,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public void awaitWritable(final long time, final TimeUnit timeUnit) throws IOException {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             throw UndertowMessages.MESSAGES.channelIsClosed();
         }
         delegate.awaitWritable(time, timeUnit);
@@ -102,18 +107,19 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public boolean isOpen() {
-        return !isFinished() && delegate.isOpen();
+        return !isFinishedInternal() && delegate.isOpen();
     }
 
     @Override
     public void close() throws IOException {
-        if (isFinished()) return;
+        if (isFinishedInternal()) return;
+        closed = true;
         delegate.close();
     }
 
     @Override
     public boolean flush() throws IOException {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             return true;
         }
         return delegate.flush();
@@ -121,7 +127,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public long transferFrom(final FileChannel src, final long position, final long count) throws IOException {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             throw UndertowMessages.MESSAGES.channelIsClosed();
         }
         return delegate.transferFrom(src, position, count);
@@ -129,7 +135,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public long transferFrom(final StreamSourceChannel source, final long count, final ByteBuffer throughBuffer) throws IOException {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             throw UndertowMessages.MESSAGES.channelIsClosed();
         }
         return delegate.transferFrom(source, count, throughBuffer);
@@ -139,7 +145,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
     public ChannelListener.Setter<? extends StreamSinkChannel> getWriteSetter() {
         if (writeSetter == null) {
             writeSetter = new ChannelListener.SimpleSetter<>();
-            if (!isFinished()) {
+            if (!isFinishedInternal()) {
                 if(delegate instanceof ConduitStreamSinkChannel) {
                     ((ConduitStreamSinkChannel) delegate).setWriteListener(new SetterDelegatingListener((ChannelListener.SimpleSetter)writeSetter, this));
                 } else {
@@ -154,7 +160,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
     public ChannelListener.Setter<? extends StreamSinkChannel> getCloseSetter() {
         if (closeSetter == null) {
             closeSetter = new ChannelListener.SimpleSetter<>();
-            if (!isFinished()) {
+            if (!isFinishedInternal()) {
                 delegate.getCloseSetter().set(ChannelListeners.delegatingChannelListener(this, closeSetter));
             }
         }
@@ -173,7 +179,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public long write(final ByteBuffer[] srcs, final int offset, final int length) throws IOException {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             throw UndertowMessages.MESSAGES.channelIsClosed();
         }
         return delegate.write(srcs, offset, length);
@@ -181,7 +187,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public long write(final ByteBuffer[] srcs) throws IOException {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             throw UndertowMessages.MESSAGES.channelIsClosed();
         }
         return delegate.write(srcs);
@@ -189,7 +195,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public int writeFinal(ByteBuffer src) throws IOException {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             throw UndertowMessages.MESSAGES.channelIsClosed();
         }
         return delegate.writeFinal(src);
@@ -197,7 +203,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public long writeFinal(ByteBuffer[] srcs, int offset, int length) throws IOException {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             throw UndertowMessages.MESSAGES.channelIsClosed();
         }
         return delegate.writeFinal(srcs, offset, length);
@@ -205,7 +211,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public long writeFinal(ByteBuffer[] srcs) throws IOException {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             throw UndertowMessages.MESSAGES.channelIsClosed();
         }
         return delegate.writeFinal(srcs);
@@ -218,7 +224,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public <T> T getOption(final Option<T> option) throws IOException {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             throw UndertowMessages.MESSAGES.channelIsClosed();
         }
         return delegate.getOption(option);
@@ -226,7 +232,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public <T> T setOption(final Option<T> option, final T value) throws IllegalArgumentException, IOException {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             throw UndertowMessages.MESSAGES.channelIsClosed();
         }
         return delegate.setOption(option, value);
@@ -234,7 +240,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public int write(final ByteBuffer src) throws IOException {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             throw UndertowMessages.MESSAGES.channelIsClosed();
         }
         return delegate.write(src);
@@ -242,7 +248,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public void resumeWrites() {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             return;
         }
         delegate.resumeWrites();
@@ -250,7 +256,7 @@ public abstract class DetachableStreamSinkChannel implements StreamSinkChannel {
 
     @Override
     public void wakeupWrites() {
-        if (isFinished()) {
+        if (isFinishedInternal()) {
             return;
         }
         delegate.wakeupWrites();

@@ -51,7 +51,7 @@ public abstract class AbstractServerConnection  extends ServerConnection {
     protected final StreamSinkConduit originalSinkConduit;
     protected final List<CloseListener> closeListeners = new LinkedList<>();
 
-    protected HttpServerExchange current;
+    public HttpServerExchange current;
 
     private final int bufferSize;
 
